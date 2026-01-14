@@ -129,7 +129,15 @@ func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, e
 
 // SetRoutes configures routes for TUN interface
 func (m *windowsRouteManager) SetRoutes() error {
-	// Configure IP addresses first
+	// Enable process protection FIRST - this prevents traffic loop
+	// by excluding xray's own traffic from TUN routing
+	if m.wfpManager != nil {
+		if err := m.wfpManager.EnableProcessProtection(); err != nil {
+			errors.LogWarning(m.ctx, "failed to enable process protection: ", err)
+		}
+	}
+
+	// Configure IP addresses
 	if err := m.configureIPAddresses(); err != nil {
 		return fmt.Errorf("failed to configure IP addresses: %w", err)
 	}
@@ -160,7 +168,7 @@ func (m *windowsRouteManager) SetRoutes() error {
 	}
 
 	// Enable DNS leak prevention
-	if m.wfpManager != nil {
+	if m.wfpManager != nil && !m.options.DisableDNSHijack {
 		if err := m.wfpManager.EnableDNSProtection(); err != nil {
 			errors.LogWarning(m.ctx, "failed to enable DNS protection: ", err)
 		}

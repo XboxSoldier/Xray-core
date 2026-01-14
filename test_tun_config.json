@@ -1,7 +1,6 @@
 {
   "_comment1": "Windows: Download wintun.dll from https://www.wintun.net/ and place it alongside xray.exe",
-  "_comment2": "IMPORTANT: Set sockopt.interface to your physical network adapter name to avoid traffic loop",
-  "_comment3": "Check Xray logs for 'Available network interfaces' to find the correct interface name",
+  "_comment2": "Traffic loop is prevented by WFP process protection (xray traffic bypasses TUN)",
   "log": {
     "loglevel": "debug"
   },
@@ -61,11 +60,6 @@
             "password": "YOUR_PASSWORD"
           }
         ]
-      },
-      "streamSettings": {
-        "sockopt": {
-          "interface": "Ethernet"
-        }
       }
     },
     {
@@ -73,11 +67,6 @@
       "protocol": "freedom",
       "settings": {
         "domainStrategy": "AsIs"
-      },
-      "streamSettings": {
-        "sockopt": {
-          "interface": "Ethernet"
-        }
       }
     },
     {

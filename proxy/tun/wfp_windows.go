@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"unsafe"
 
 	"github.com/xtls/xray-core/common/errors"
@@ -144,23 +145,27 @@ var (
 	modfwpuclnt = windows.NewLazySystemDLL("fwpuclnt.dll")
 	modole32    = windows.NewLazySystemDLL("ole32.dll")
 
-	procFwpmEngineOpen0          = modfwpuclnt.NewProc("FwpmEngineOpen0")
-	procFwpmEngineClose0         = modfwpuclnt.NewProc("FwpmEngineClose0")
-	procFwpmSubLayerAdd0         = modfwpuclnt.NewProc("FwpmSubLayerAdd0")
-	procFwpmSubLayerDeleteByKey0 = modfwpuclnt.NewProc("FwpmSubLayerDeleteByKey0")
-	procFwpmFilterAdd0           = modfwpuclnt.NewProc("FwpmFilterAdd0")
-	procFwpmFilterDeleteById0    = modfwpuclnt.NewProc("FwpmFilterDeleteById0")
-	procCoCreateGuid             = modole32.NewProc("CoCreateGuid")
+	procFwpmEngineOpen0            = modfwpuclnt.NewProc("FwpmEngineOpen0")
+	procFwpmEngineClose0           = modfwpuclnt.NewProc("FwpmEngineClose0")
+	procFwpmSubLayerAdd0           = modfwpuclnt.NewProc("FwpmSubLayerAdd0")
+	procFwpmSubLayerDeleteByKey0   = modfwpuclnt.NewProc("FwpmSubLayerDeleteByKey0")
+	procFwpmFilterAdd0             = modfwpuclnt.NewProc("FwpmFilterAdd0")
+	procFwpmFilterDeleteById0      = modfwpuclnt.NewProc("FwpmFilterDeleteById0")
+	procFwpmGetAppIdFromFileName0  = modfwpuclnt.NewProc("FwpmGetAppIdFromFileName0")
+	procFwpmFreeMemory0            = modfwpuclnt.NewProc("FwpmFreeMemory0")
+	procCoCreateGuid               = modole32.NewProc("CoCreateGuid")
 )
 
-// wfpManager manages Windows Filtering Platform for DNS leak prevention
+// wfpManager manages Windows Filtering Platform for DNS leak prevention and process protection
 type wfpManager struct {
-	ctx         context.Context
-	engine      uintptr
-	subLayerKey windows.GUID
-	luid        LUID
-	filterIDs   []uint64
-	enabled     bool
+	ctx              context.Context
+	engine           uintptr
+	subLayerKey      windows.GUID
+	luid             LUID
+	filterIDs        []uint64
+	appID            *FWP_BYTE_BLOB
+	dnsEnabled       bool
+	processProtected bool
 }
 
 // newWFPManager creates a new WFP manager
@@ -213,9 +218,89 @@ func newWFPManager(ctx context.Context, luid LUID) (*wfpManager, error) {
 	return m, nil
 }
 
+// EnableProcessProtection excludes traffic from current process from TUN routing
+// This prevents the infinite loop where xray's outbound traffic goes back into TUN
+func (m *wfpManager) EnableProcessProtection() error {
+	if m.processProtected {
+		return nil
+	}
+
+	// Get current executable path
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// Get app ID for the executable
+	exePathPtr, err := windows.UTF16PtrFromString(exePath)
+	if err != nil {
+		return fmt.Errorf("failed to convert path: %w", err)
+	}
+
+	var appID *FWP_BYTE_BLOB
+	ret, _, _ := procFwpmGetAppIdFromFileName0.Call(
+		uintptr(unsafe.Pointer(exePathPtr)),
+		uintptr(unsafe.Pointer(&appID)),
+	)
+	if ret != 0 {
+		return fmt.Errorf("FwpmGetAppIdFromFileName0 failed: code %d", ret)
+	}
+	m.appID = appID
+
+	// Add filter to permit all traffic from this process (highest priority)
+	// This allows xray's outbound connections to bypass TUN routing
+	if err := m.addProcessPermitFilter(FWPM_LAYER_ALE_AUTH_CONNECT_V4); err != nil {
+		return fmt.Errorf("failed to add IPv4 process permit filter: %w", err)
+	}
+	if err := m.addProcessPermitFilter(FWPM_LAYER_ALE_AUTH_CONNECT_V6); err != nil {
+		return fmt.Errorf("failed to add IPv6 process permit filter: %w", err)
+	}
+
+	m.processProtected = true
+	errors.LogInfo(m.ctx, "process protection enabled via WFP for ", exePath)
+
+	return nil
+}
+
+// addProcessPermitFilter adds a filter to permit traffic from current process
+func (m *wfpManager) addProcessPermitFilter(layerKey windows.GUID) error {
+	condition := FWPM_FILTER_CONDITION0{
+		FieldKey:  FWPM_CONDITION_ALE_APP_ID,
+		MatchType: FWP_MATCH_EQUAL,
+		ConditionValue: FWP_CONDITION_VALUE0{
+			Type:  FWP_BYTE_ARRAY16_TYPE, // Actually FWP_BYTE_BLOB_TYPE
+			Value: uintptr(unsafe.Pointer(m.appID)),
+		},
+	}
+
+	filter := FWPM_FILTER0{
+		DisplayData:         createDisplayData("Xray Process Permit", "Allow xray outbound traffic to bypass TUN"),
+		LayerKey:            layerKey,
+		SubLayerKey:         m.subLayerKey,
+		Weight:              FWP_VALUE0{Type: FWP_UINT16, Value: 1000}, // Highest priority
+		NumFilterConditions: 1,
+		FilterCondition:     &condition,
+		Action:              FWPM_ACTION0{Type: FWP_ACTION_PERMIT},
+	}
+
+	var filterID uint64
+	ret, _, err := procFwpmFilterAdd0.Call(
+		m.engine,
+		uintptr(unsafe.Pointer(&filter)),
+		0, // sd
+		uintptr(unsafe.Pointer(&filterID)),
+	)
+	if ret != 0 {
+		return fmt.Errorf("FwpmFilterAdd0 failed: %v (code %d)", err, ret)
+	}
+
+	m.filterIDs = append(m.filterIDs, filterID)
+	return nil
+}
+
 // EnableDNSProtection enables DNS leak prevention filters
 func (m *wfpManager) EnableDNSProtection() error {
-	if m.enabled {
+	if m.dnsEnabled {
 		return nil
 	}
 
@@ -235,7 +320,7 @@ func (m *wfpManager) EnableDNSProtection() error {
 		return fmt.Errorf("failed to add IPv6 DNS block filter: %w", err)
 	}
 
-	m.enabled = true
+	m.dnsEnabled = true
 	errors.LogInfo(m.ctx, "DNS leak prevention enabled via WFP")
 
 	return nil
@@ -328,12 +413,8 @@ func (m *wfpManager) addDNSBlockFilter(layerKey windows.GUID) error {
 	return nil
 }
 
-// DisableDNSProtection disables DNS leak prevention filters
-func (m *wfpManager) DisableDNSProtection() error {
-	if !m.enabled {
-		return nil
-	}
-
+// DisableProtection disables all WFP filters
+func (m *wfpManager) DisableProtection() error {
 	var errs []error
 	for _, filterID := range m.filterIDs {
 		ret, _, err := procFwpmFilterDeleteById0.Call(m.engine, uintptr(filterID))
@@ -342,18 +423,30 @@ func (m *wfpManager) DisableDNSProtection() error {
 		}
 	}
 	m.filterIDs = nil
-	m.enabled = false
+	m.dnsEnabled = false
+	m.processProtected = false
 
 	if len(errs) > 0 {
 		return fmt.Errorf("errors during filter cleanup: %v", errs)
 	}
 
-	errors.LogInfo(m.ctx, "DNS leak prevention disabled")
+	errors.LogInfo(m.ctx, "WFP protection disabled")
 	return nil
+}
+
+// DisableDNSProtection is kept for backward compatibility
+func (m *wfpManager) DisableDNSProtection() error {
+	return m.DisableProtection()
 }
 
 // Close cleans up WFP resources
 func (m *wfpManager) Close() error {
+	// Free app ID memory if allocated
+	if m.appID != nil {
+		procFwpmFreeMemory0.Call(uintptr(unsafe.Pointer(&m.appID)))
+		m.appID = nil
+	}
+
 	if m.engine != 0 {
 		// Filters and sublayer are cleaned up automatically due to dynamic session flag
 		procFwpmEngineClose0.Call(m.engine)
