@@ -91,14 +91,16 @@ type FWPM_SUBLAYER0 struct {
 	SubLayerKey  windows.GUID
 	DisplayData  FWPM_DISPLAY_DATA0
 	Flags        uint32
+	_            [4]byte // padding for 8-byte alignment of ProviderKey
 	ProviderKey  *windows.GUID
 	ProviderData FWP_BYTE_BLOB
 	Weight       uint16
-	_            [2]byte
+	_2           [6]byte // padding to 8-byte boundary
 }
 
 type FWP_BYTE_BLOB struct {
 	Size uint32
+	_    [4]byte // padding for 8-byte alignment of Data
 	Data *uint8
 }
 
@@ -106,12 +108,14 @@ type FWPM_FILTER0 struct {
 	FilterKey           windows.GUID
 	DisplayData         FWPM_DISPLAY_DATA0
 	Flags               uint32
+	_                   [4]byte // padding for 8-byte alignment of ProviderKey
 	ProviderKey         *windows.GUID
 	ProviderData        FWP_BYTE_BLOB
 	LayerKey            windows.GUID
 	SubLayerKey         windows.GUID
 	Weight              FWP_VALUE0
 	NumFilterConditions uint32
+	_2                  [4]byte // padding for 8-byte alignment of FilterCondition
 	FilterCondition     *FWPM_FILTER_CONDITION0
 	Action              FWPM_ACTION0
 	Context             windows.GUID // union: rawContext (uint64) or providerContextKey (GUID)
@@ -123,6 +127,7 @@ type FWPM_FILTER0 struct {
 type FWPM_FILTER_CONDITION0 struct {
 	FieldKey       windows.GUID
 	MatchType      uint32
+	_              [4]byte // padding for 8-byte alignment of ConditionValue
 	ConditionValue FWP_CONDITION_VALUE0
 }
 
