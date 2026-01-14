@@ -22,7 +22,9 @@ import (
 type Handler struct {
 	ctx             context.Context
 	config          *Config
+	tun             Tun
 	stack           Stack
+	routeManager    RouteManager
 	policyManager   policy.Manager
 	dispatcher      routing.Dispatcher
 	tag             string
@@ -67,6 +69,7 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 	if err != nil {
 		return err
 	}
+	t.tun = tunInterface
 
 	errors.LogInfo(t.ctx, tunName, " created")
 
@@ -96,8 +99,63 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 
 	t.stack = tunStack
 
+	// Set up auto-route if enabled
+	if t.config.AutoRoute {
+		routeOpts, err := t.buildRouteOptions()
+		if err != nil {
+			errors.LogWarning(t.ctx, "failed to build route options: ", err)
+		} else {
+			routeManager, err := NewRouteManager(t.ctx, routeOpts)
+			if err != nil {
+				errors.LogWarning(t.ctx, "failed to create route manager: ", err)
+			} else {
+				if err := routeManager.SetRoutes(); err != nil {
+					errors.LogWarning(t.ctx, "failed to set routes: ", err)
+					_ = routeManager.Close()
+				} else {
+					t.routeManager = routeManager
+				}
+			}
+		}
+	}
+
 	errors.LogInfo(t.ctx, tunName, " up")
 	return nil
+}
+
+// buildRouteOptions constructs RouteOptions from the config
+func (t *Handler) buildRouteOptions() (RouteOptions, error) {
+	routeAddrs, err := ParsePrefixes(t.config.RouteAddress)
+	if err != nil {
+		return RouteOptions{}, errors.New("invalid route_address").Base(err)
+	}
+
+	routeExcludeAddrs, err := ParsePrefixes(t.config.RouteExcludeAddress)
+	if err != nil {
+		return RouteOptions{}, errors.New("invalid route_exclude_address").Base(err)
+	}
+
+	inet4Addr, err := ParseAddress(t.config.Inet4Address)
+	if err != nil {
+		return RouteOptions{}, errors.New("invalid inet4_address").Base(err)
+	}
+
+	inet6Addr, err := ParseAddress(t.config.Inet6Address)
+	if err != nil {
+		return RouteOptions{}, errors.New("invalid inet6_address").Base(err)
+	}
+
+	return RouteOptions{
+		InterfaceName:       t.config.Name,
+		AutoRoute:           t.config.AutoRoute,
+		RouteAddress:        routeAddrs,
+		RouteExcludeAddress: routeExcludeAddrs,
+		StrictRoute:         t.config.StrictRoute,
+		TableIndex:          int(t.config.TableIndex),
+		Inet4Address:        inet4Addr,
+		Inet6Address:        inet6Addr,
+		DisableDNSHijack:    t.config.DisableDnsHijack,
+	}, nil
 }
 
 // HandleConnection pass the connection coming from the ip stack to the routing dispatcher
@@ -153,6 +211,35 @@ func (t *Handler) Network() []net.Network {
 // Process implements proxy.Inbound
 // and exists only to comply to proxy interface, which should never get any inputs due to no listening ports
 func (t *Handler) Process(ctx context.Context, network net.Network, conn stat.Connection, dispatcher routing.Dispatcher) error {
+	return nil
+}
+
+// Close implements common.Closable
+func (t *Handler) Close() error {
+	// Clean up routes first (before closing the TUN interface)
+	if t.routeManager != nil {
+		if err := t.routeManager.UnsetRoutes(); err != nil {
+			errors.LogWarning(t.ctx, "failed to unset routes: ", err)
+		}
+		if err := t.routeManager.Close(); err != nil {
+			errors.LogWarning(t.ctx, "failed to close route manager: ", err)
+		}
+		t.routeManager = nil
+	}
+
+	// Close the stack
+	if t.stack != nil {
+		_ = t.stack.Close()
+		t.stack = nil
+	}
+
+	// Close the TUN interface
+	if t.tun != nil {
+		_ = t.tun.Close()
+		t.tun = nil
+	}
+
+	errors.LogInfo(t.ctx, "TUN handler closed")
 	return nil
 }
 

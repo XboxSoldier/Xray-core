@@ -10,4 +10,18 @@ message Config {
   string name = 1;
   uint32 MTU = 2;
   uint32 user_level = 3;
+
+  // Auto route configuration
+  bool auto_route = 4;
+  repeated string route_address = 5;
+  repeated string route_exclude_address = 6;
+  bool strict_route = 7;
+  int32 table_index = 8;
+
+  // TUN interface addresses
+  string inet4_address = 9;
+  string inet6_address = 10;
+
+  // Windows DNS leak prevention (enabled by default when auto_route is true)
+  bool disable_dns_hijack = 11;
 }

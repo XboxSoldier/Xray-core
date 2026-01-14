@@ -28,6 +28,17 @@ type Config struct {
 	Name      string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	MTU       uint32 `protobuf:"varint,2,opt,name=MTU,proto3" json:"MTU,omitempty"`
 	UserLevel uint32 `protobuf:"varint,3,opt,name=user_level,json=userLevel,proto3" json:"user_level,omitempty"`
+	// Auto route configuration
+	AutoRoute           bool     `protobuf:"varint,4,opt,name=auto_route,json=autoRoute,proto3" json:"auto_route,omitempty"`
+	RouteAddress        []string `protobuf:"bytes,5,rep,name=route_address,json=routeAddress,proto3" json:"route_address,omitempty"`
+	RouteExcludeAddress []string `protobuf:"bytes,6,rep,name=route_exclude_address,json=routeExcludeAddress,proto3" json:"route_exclude_address,omitempty"`
+	StrictRoute         bool     `protobuf:"varint,7,opt,name=strict_route,json=strictRoute,proto3" json:"strict_route,omitempty"`
+	TableIndex          int32    `protobuf:"varint,8,opt,name=table_index,json=tableIndex,proto3" json:"table_index,omitempty"`
+	// TUN interface addresses
+	Inet4Address string `protobuf:"bytes,9,opt,name=inet4_address,json=inet4Address,proto3" json:"inet4_address,omitempty"`
+	Inet6Address string `protobuf:"bytes,10,opt,name=inet6_address,json=inet6Address,proto3" json:"inet6_address,omitempty"`
+	// Windows DNS leak prevention
+	DisableDnsHijack bool `protobuf:"varint,11,opt,name=disable_dns_hijack,json=disableDnsHijack,proto3" json:"disable_dns_hijack,omitempty"`
 }
 
 func (x *Config) Reset() {
@@ -79,6 +90,62 @@ func (x *Config) GetUserLevel() uint32 {
 		return x.UserLevel
 	}
 	return 0
+}
+
+func (x *Config) GetAutoRoute() bool {
+	if x != nil {
+		return x.AutoRoute
+	}
+	return false
+}
+
+func (x *Config) GetRouteAddress() []string {
+	if x != nil {
+		return x.RouteAddress
+	}
+	return nil
+}
+
+func (x *Config) GetRouteExcludeAddress() []string {
+	if x != nil {
+		return x.RouteExcludeAddress
+	}
+	return nil
+}
+
+func (x *Config) GetStrictRoute() bool {
+	if x != nil {
+		return x.StrictRoute
+	}
+	return false
+}
+
+func (x *Config) GetTableIndex() int32 {
+	if x != nil {
+		return x.TableIndex
+	}
+	return 0
+}
+
+func (x *Config) GetInet4Address() string {
+	if x != nil {
+		return x.Inet4Address
+	}
+	return ""
+}
+
+func (x *Config) GetInet6Address() string {
+	if x != nil {
+		return x.Inet6Address
+	}
+	return ""
+}
+
+func (x *Config) GetDisableDnsHijack() bool {
+	if x != nil {
+		return x.DisableDnsHijack
+	}
+	return false
 }
 
 var File_config_proto protoreflect.FileDescriptor
