@@ -50,10 +50,9 @@ type SOCKADDR_INET struct {
 var (
 	modiphlpapi = windows.NewLazySystemDLL("iphlpapi.dll")
 
-	procCreateIpForwardEntry2         = modiphlpapi.NewProc("CreateIpForwardEntry2")
-	procDeleteIpForwardEntry2         = modiphlpapi.NewProc("DeleteIpForwardEntry2")
-	procInitializeIpForwardEntry      = modiphlpapi.NewProc("InitializeIpForwardEntry")
-	procConvertInterfaceAliasToLuid   = modiphlpapi.NewProc("ConvertInterfaceAliasToLuid")
+	procCreateIpForwardEntry2       = modiphlpapi.NewProc("CreateIpForwardEntry2")
+	procDeleteIpForwardEntry2       = modiphlpapi.NewProc("DeleteIpForwardEntry2")
+	procConvertInterfaceAliasToLuid = modiphlpapi.NewProc("ConvertInterfaceAliasToLuid")
 	procConvertInterfaceIndexToLuid   = modiphlpapi.NewProc("ConvertInterfaceIndexToLuid")
 	procConvertInterfaceLuidToIndex   = modiphlpapi.NewProc("ConvertInterfaceLuidToIndex")
 	procGetUnicastIpAddressTable      = modiphlpapi.NewProc("GetUnicastIpAddressTable")
@@ -191,16 +190,15 @@ func (m *windowsRouteManager) SetRoutes() error {
 
 // createRoute creates a MIB_IPFORWARD_ROW2 for the given prefix
 func (m *windowsRouteManager) createRoute(prefix netip.Prefix) (MIB_IPFORWARD_ROW2, error) {
+	// Go zero-initializes the struct (equivalent to SDK's InitializeIpForwardEntry inline function)
 	var row MIB_IPFORWARD_ROW2
-
-	// Initialize the row
-	procInitializeIpForwardEntry.Call(uintptr(unsafe.Pointer(&row)))
 
 	row.InterfaceLuid = m.luid
 	row.DestinationPrefix = prefixToAddressPrefix(prefix)
 	row.NextHop = getGatewayAddress(prefix.Addr().Is4())
 	row.Metric = 0   // Use automatic metric
 	row.Protocol = 3 // MIB_IPPROTO_NETMGMT
+	row.Origin = 1   // NlroManual
 
 	return row, nil
 }
