@@ -23,8 +23,8 @@ const (
 
 	FWP_MATCH_EQUAL = 0
 
-	FWP_UINT16            = 3
-	FWP_BYTE_ARRAY16_TYPE = 9
+	FWP_UINT16         = 3
+	FWP_BYTE_BLOB_TYPE = 13
 )
 
 // GUIDs for WFP layers and conditions
@@ -268,7 +268,7 @@ func (m *wfpManager) addProcessPermitFilter(layerKey windows.GUID) error {
 		FieldKey:  FWPM_CONDITION_ALE_APP_ID,
 		MatchType: FWP_MATCH_EQUAL,
 		ConditionValue: FWP_CONDITION_VALUE0{
-			Type:  FWP_BYTE_ARRAY16_TYPE, // Actually FWP_BYTE_BLOB_TYPE
+			Type:  FWP_BYTE_BLOB_TYPE,
 			Value: uintptr(unsafe.Pointer(m.appID)),
 		},
 	}

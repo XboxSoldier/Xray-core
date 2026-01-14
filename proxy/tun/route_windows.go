@@ -57,10 +57,9 @@ var (
 	procConvertInterfaceIndexToLuid   = modiphlpapi.NewProc("ConvertInterfaceIndexToLuid")
 	procConvertInterfaceLuidToIndex   = modiphlpapi.NewProc("ConvertInterfaceLuidToIndex")
 	procGetUnicastIpAddressTable      = modiphlpapi.NewProc("GetUnicastIpAddressTable")
-	procCreateUnicastIpAddressEntry   = modiphlpapi.NewProc("CreateUnicastIpAddressEntry")
-	procDeleteUnicastIpAddressEntry   = modiphlpapi.NewProc("DeleteUnicastIpAddressEntry")
-	procInitializeUnicastIpAddressRow = modiphlpapi.NewProc("InitializeUnicastIpAddressRow")
-	procFreeMibTable                  = modiphlpapi.NewProc("FreeMibTable")
+	procCreateUnicastIpAddressEntry = modiphlpapi.NewProc("CreateUnicastIpAddressEntry")
+	procDeleteUnicastIpAddressEntry = modiphlpapi.NewProc("DeleteUnicastIpAddressEntry")
+	procFreeMibTable                = modiphlpapi.NewProc("FreeMibTable")
 )
 
 // MIB_UNICASTIPADDRESS_ROW represents a unicast IP address entry
@@ -239,10 +238,8 @@ func (m *windowsRouteManager) configureIPAddresses() error {
 
 // addIPAddress adds an IP address to the TUN interface
 func (m *windowsRouteManager) addIPAddress(prefix netip.Prefix) error {
+	// Go zero-initializes the struct, which is the correct initial state
 	var row MIB_UNICASTIPADDRESS_ROW
-
-	// Initialize the row
-	procInitializeUnicastIpAddressRow.Call(uintptr(unsafe.Pointer(&row)))
 
 	row.InterfaceLuid = m.luid
 	row.OnLinkPrefixLength = uint8(prefix.Bits())
@@ -275,7 +272,6 @@ func (m *windowsRouteManager) unconfigureIPAddresses() error {
 	var errs []error
 	for _, addr := range m.configuredIPs {
 		var row MIB_UNICASTIPADDRESS_ROW
-		procInitializeUnicastIpAddressRow.Call(uintptr(unsafe.Pointer(&row)))
 		row.InterfaceLuid = m.luid
 		row.Address = addr
 
