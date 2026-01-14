@@ -1,20 +1,19 @@
 {
+  "_comment": "Windows: Download wintun.dll from https://www.wintun.net/ and place it alongside xray.exe",
   "log": {
     "loglevel": "debug"
   },
   "dns": {
     "servers": [
       {
-        "address": "1.1.1.1",
-        "domains": ["geosite:!private"],
-        "skipFallback": true,
-        "tag": "proxy-dns"
-      },
-      {
         "address": "localhost",
         "domains": ["geosite:private"],
-        "skipFallback": false,
+        "skipFallback": true,
         "tag": "direct-dns"
+      },
+      {
+        "address": "1.1.1.1",
+        "tag": "proxy-dns"
       }
     ],
     "queryStrategy": "UseIP"
