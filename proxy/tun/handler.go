@@ -2,6 +2,7 @@ package tun
 
 import (
 	"context"
+	gonet "net"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
@@ -44,6 +45,25 @@ func (t *Handler) policy() policy.Session {
 	return p
 }
 
+// logNetworkInterfaces logs all network interfaces for debugging
+func logNetworkInterfaces(ctx context.Context) {
+	interfaces, err := gonet.Interfaces()
+	if err != nil {
+		errors.LogWarning(ctx, "failed to list network interfaces: ", err)
+		return
+	}
+	errors.LogInfo(ctx, "=== Available network interfaces (for sockopt.interface) ===")
+	for _, iface := range interfaces {
+		addrs, _ := iface.Addrs()
+		addrStrs := make([]string, 0, len(addrs))
+		for _, addr := range addrs {
+			addrStrs = append(addrStrs, addr.String())
+		}
+		errors.LogInfo(ctx, "  Interface[", iface.Index, "]: Name=\"", iface.Name, "\", Flags=", iface.Flags, ", Addrs=", addrStrs)
+	}
+	errors.LogInfo(ctx, "=============================================================")
+}
+
 // Init the Handler instance with necessary parameters
 func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routing.Dispatcher) error {
 	var err error
@@ -59,6 +79,9 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 	t.ctx = core.ToBackgroundDetachedContext(ctx)
 	t.policyManager = pm
 	t.dispatcher = dispatcher
+
+	// Log all network interfaces for debugging sockopt.interface issues
+	logNetworkInterfaces(t.ctx)
 
 	tunName := t.config.Name
 	tunOptions := TunOptions{

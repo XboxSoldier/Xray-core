@@ -1,7 +1,7 @@
 {
   "_comment1": "Windows: Download wintun.dll from https://www.wintun.net/ and place it alongside xray.exe",
-  "_comment2": "IMPORTANT: Replace YOUR_LOCAL_IP with your physical network adapter's IP (e.g., 192.168.1.100)",
-  "_comment3": "Run 'ipconfig' to find your adapter IP, use sendThrough to bind outbound to physical interface",
+  "_comment2": "IMPORTANT: Set sockopt.interface to your physical network adapter name to avoid traffic loop",
+  "_comment3": "Check Xray logs for 'Available network interfaces' to find the correct interface name",
   "log": {
     "loglevel": "debug"
   },
@@ -52,7 +52,6 @@
     {
       "tag": "proxy",
       "protocol": "shadowsocks",
-      "sendThrough": "YOUR_LOCAL_IP",
       "settings": {
         "servers": [
           {
@@ -62,14 +61,23 @@
             "password": "YOUR_PASSWORD"
           }
         ]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "interface": "Ethernet"
+        }
       }
     },
     {
       "tag": "direct",
       "protocol": "freedom",
-      "sendThrough": "YOUR_LOCAL_IP",
       "settings": {
         "domainStrategy": "AsIs"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "interface": "Ethernet"
+        }
       }
     },
     {
