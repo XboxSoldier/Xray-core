@@ -78,10 +78,17 @@ func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, e
 		return &noopRouteManager{}, nil
 	}
 
-	// Get interface LUID from name
-	luid, err := getInterfaceLUID(options.InterfaceName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get interface LUID: %w", err)
+	// Use provided LUID or look up by name
+	var luid LUID
+	if options.InterfaceLUID != 0 {
+		luid = LUID(options.InterfaceLUID)
+		errors.LogDebug(ctx, "using provided interface LUID: ", options.InterfaceLUID)
+	} else {
+		var err error
+		luid, err = getInterfaceLUID(options.InterfaceName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get interface LUID: %w", err)
+		}
 	}
 
 	m := &windowsRouteManager{

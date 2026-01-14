@@ -78,6 +78,11 @@ func (t *WindowsTun) Close() error {
 	return nil
 }
 
+// LUID returns the locally unique identifier of the adapter
+func (t *WindowsTun) LUID() uint64 {
+	return t.adapter.LUID()
+}
+
 // newEndpoint builds new gVisor stack.LinkEndpoint (WintunEndpoint) on top of WindowsTun
 func (t *WindowsTun) newEndpoint() (stack.LinkEndpoint, error) {
 	return &WintunEndpoint{tun: t}, nil

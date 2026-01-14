@@ -22,6 +22,8 @@ type RouteOptions struct {
 	InterfaceName string
 	// InterfaceIndex is the index of TUN interface (set after creation)
 	InterfaceIndex int
+	// InterfaceLUID is the locally unique identifier (Windows only)
+	InterfaceLUID uint64
 	// AutoRoute enables automatic route configuration
 	AutoRoute bool
 	// RouteAddress specifies custom route prefixes
@@ -38,6 +40,11 @@ type RouteOptions struct {
 	Inet6Address netip.Prefix
 	// DisableDNSHijack disables DNS leak prevention (Windows only)
 	DisableDNSHijack bool
+}
+
+// TunWithLUID is an optional interface for TUN implementations that provide LUID
+type TunWithLUID interface {
+	LUID() uint64
 }
 
 // Default TUN interface addresses

@@ -145,7 +145,7 @@ func (t *Handler) buildRouteOptions() (RouteOptions, error) {
 		return RouteOptions{}, errors.New("invalid inet6_address").Base(err)
 	}
 
-	return RouteOptions{
+	opts := RouteOptions{
 		InterfaceName:       t.config.Name,
 		AutoRoute:           t.config.AutoRoute,
 		RouteAddress:        routeAddrs,
@@ -155,7 +155,14 @@ func (t *Handler) buildRouteOptions() (RouteOptions, error) {
 		Inet4Address:        inet4Addr,
 		Inet6Address:        inet6Addr,
 		DisableDNSHijack:    t.config.DisableDnsHijack,
-	}, nil
+	}
+
+	// Get LUID from TUN interface if available (Windows)
+	if tunWithLUID, ok := t.tun.(TunWithLUID); ok {
+		opts.InterfaceLUID = tunWithLUID.LUID()
+	}
+
+	return opts, nil
 }
 
 // HandleConnection pass the connection coming from the ip stack to the routing dispatcher
