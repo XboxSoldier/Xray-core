@@ -48,18 +48,24 @@ type SOCKADDR_INET struct {
 	Data   [26]byte // Large enough for both IPv4 and IPv6
 }
 
+// ScopeLevelCount is the number of scope levels
+const ScopeLevelCount = 16
+
 var (
 	modiphlpapi = windows.NewLazySystemDLL("iphlpapi.dll")
 
 	procCreateIpForwardEntry2       = modiphlpapi.NewProc("CreateIpForwardEntry2")
 	procDeleteIpForwardEntry2       = modiphlpapi.NewProc("DeleteIpForwardEntry2")
 	procConvertInterfaceAliasToLuid = modiphlpapi.NewProc("ConvertInterfaceAliasToLuid")
-	procConvertInterfaceIndexToLuid   = modiphlpapi.NewProc("ConvertInterfaceIndexToLuid")
-	procConvertInterfaceLuidToIndex   = modiphlpapi.NewProc("ConvertInterfaceLuidToIndex")
-	procGetUnicastIpAddressTable      = modiphlpapi.NewProc("GetUnicastIpAddressTable")
+	procConvertInterfaceIndexToLuid = modiphlpapi.NewProc("ConvertInterfaceIndexToLuid")
+	procConvertInterfaceLuidToIndex = modiphlpapi.NewProc("ConvertInterfaceLuidToIndex")
+	procGetUnicastIpAddressTable    = modiphlpapi.NewProc("GetUnicastIpAddressTable")
 	procCreateUnicastIpAddressEntry = modiphlpapi.NewProc("CreateUnicastIpAddressEntry")
 	procDeleteUnicastIpAddressEntry = modiphlpapi.NewProc("DeleteUnicastIpAddressEntry")
 	procFreeMibTable                = modiphlpapi.NewProc("FreeMibTable")
+	procGetIpInterfaceEntry         = modiphlpapi.NewProc("GetIpInterfaceEntry")
+	procSetIpInterfaceEntry         = modiphlpapi.NewProc("SetIpInterfaceEntry")
+	procInitializeIpInterfaceEntry  = modiphlpapi.NewProc("InitializeIpInterfaceEntry")
 )
 
 // MIB_UNICASTIPADDRESS_ROW represents a unicast IP address entry
@@ -80,6 +86,52 @@ type MIB_UNICASTIPADDRESS_ROW struct {
 	CreationTimeStamp  uint64
 }
 
+// MIB_IPINTERFACE_ROW represents IP interface management information
+// Reference: https://learn.microsoft.com/en-us/windows/win32/api/netioapi/ns-netioapi-mib_ipinterface_row
+type MIB_IPINTERFACE_ROW struct {
+	Family                               uint16
+	_1                                   [6]byte // padding for 8-byte alignment of InterfaceLuid
+	InterfaceLuid                        LUID
+	InterfaceIndex                       uint32
+	MaxReassemblySize                    uint32
+	InterfaceIdentifier                  uint64
+	MinRouterAdvertisementInterval       uint32
+	MaxRouterAdvertisementInterval       uint32
+	AdvertisingEnabled                   uint8
+	ForwardingEnabled                    uint8
+	WeakHostSend                         uint8
+	WeakHostReceive                      uint8
+	UseAutomaticMetric                   uint8
+	UseNeighborUnreachabilityDetection   uint8
+	ManagedAddressConfigurationSupported uint8
+	OtherStatefulConfigurationSupported  uint8
+	AdvertiseDefaultRoute                uint8
+	_2                                   [3]byte // padding for 4-byte alignment of RouterDiscoveryBehavior
+	RouterDiscoveryBehavior              uint32  // NL_ROUTER_DISCOVERY_BEHAVIOR enum
+	DadTransmits                         uint32
+	BaseReachableTime                    uint32
+	RetransmitTime                       uint32
+	PathMtuDiscoveryTimeout              uint32
+	LinkLocalAddressBehavior             uint32 // NL_LINK_LOCAL_ADDRESS_BEHAVIOR enum
+	LinkLocalAddressTimeout              uint32
+	ZoneIndices                          [ScopeLevelCount]uint32
+	SitePrefixLength                     uint32
+	Metric                               uint32
+	NlMtu                                uint32
+	Connected                            uint8
+	SupportsWakeUpPatterns               uint8
+	SupportsNeighborDiscovery            uint8
+	SupportsRouterDiscovery              uint8
+	ReachableTime                        uint32
+	// NL_INTERFACE_OFFLOAD_ROD TransmitOffload (12 bytes)
+	TransmitOffload [12]byte
+	// NL_INTERFACE_OFFLOAD_ROD ReceiveOffload (12 bytes)
+	ReceiveOffload [12]byte
+	// Windows Vista+ only:
+	DisableDefaultRoutes uint8
+	_3                   [3]byte // padding to 4-byte boundary
+}
+
 // windowsRouteManager implements RouteManager for Windows
 type windowsRouteManager struct {
 	ctx           context.Context
@@ -89,8 +141,6 @@ type windowsRouteManager struct {
 	routes        []MIB_IPFORWARD_ROW2
 	wfpManager    *wfpManager
 	configuredIPs []SOCKADDR_INET
-	gateway4      SOCKADDR_INET // IPv4 gateway for routes
-	gateway6      SOCKADDR_INET // IPv6 gateway for routes
 }
 
 // NewRouteManager creates a new RouteManager for Windows
@@ -170,10 +220,15 @@ func (m *windowsRouteManager) SetRoutes() error {
 		return fmt.Errorf("failed to configure IP addresses: %w", err)
 	}
 
-	// Calculate gateway addresses for routes (next IP in the subnet)
-	m.gateway4 = calculateGateway(m.options.Inet4Address, true)
-	m.gateway6 = calculateGateway(m.options.Inet6Address, false)
-	errors.LogDebug(m.ctx, "Route gateways configured: IPv4=", formatGateway(m.gateway4), " IPv6=", formatGateway(m.gateway6))
+	// Set interface metric to 0 (highest priority) for both IPv4 and IPv6
+	// This is critical: Windows route preference = route metric + interface metric
+	// Without this, TUN routes may not take priority over other interfaces
+	if err := m.setInterfaceMetric(windows.AF_INET); err != nil {
+		errors.LogWarning(m.ctx, "failed to set IPv4 interface metric: ", err)
+	}
+	if err := m.setInterfaceMetric(windows.AF_INET6); err != nil {
+		errors.LogWarning(m.ctx, "failed to set IPv6 interface metric: ", err)
+	}
 
 	// Build route prefixes
 	routePrefixes, err := BuildRouteRanges(m.options.RouteAddress, m.options.RouteExcludeAddress)
@@ -228,16 +283,20 @@ func (m *windowsRouteManager) createRoute(prefix netip.Prefix) (MIB_IPFORWARD_RO
 	row.InterfaceIndex = m.ifIndex
 	row.DestinationPrefix = prefixToAddressPrefix(prefix)
 
-	// Use calculated gateway address (next IP in TUN subnet)
+	// Use "On-link" (zero gateway) for point-to-point TUN interface
+	// For TUN interfaces, the driver directly receives packets destined to the interface
+	// Setting gateway to zero means "send directly to this interface"
 	if prefix.Addr().Is4() {
-		row.NextHop = m.gateway4
+		row.NextHop.Family = windows.AF_INET
+		// Data is zero-initialized = 0.0.0.0 (On-link)
 	} else {
-		row.NextHop = m.gateway6
+		row.NextHop.Family = windows.AF_INET6
+		// Data is zero-initialized = :: (On-link)
 	}
 
-	row.Metric = 1    // Very low metric to ensure TUN routes take precedence
-	row.Protocol = 3  // MIB_IPPROTO_NETMGMT
-	row.Origin = 1    // NlroManual
+	row.Metric = 0   // Route metric 0 (combined with interface metric 0 = total metric 0)
+	row.Protocol = 3 // MIB_IPPROTO_NETMGMT
+	row.Origin = 1   // NlroManual
 
 	return row, nil
 }
@@ -280,8 +339,8 @@ func (m *windowsRouteManager) addIPAddress(prefix netip.Prefix) error {
 
 	row.InterfaceLuid = m.luid
 	row.OnLinkPrefixLength = uint8(prefix.Bits())
-	row.PrefixOrigin = 1  // IpPrefixOriginManual
-	row.SuffixOrigin = 1  // IpSuffixOriginManual
+	row.PrefixOrigin = 1 // IpPrefixOriginManual
+	row.SuffixOrigin = 1 // IpSuffixOriginManual
 	row.ValidLifetime = 0xFFFFFFFF
 	row.PreferredLifetime = 0xFFFFFFFF
 	row.SkipAsSource = 0
@@ -322,6 +381,42 @@ func (m *windowsRouteManager) unconfigureIPAddresses() error {
 	if len(errs) > 0 {
 		return fmt.Errorf("errors during IP address cleanup: %v", errs)
 	}
+	return nil
+}
+
+// setInterfaceMetric sets a low metric on the TUN interface to ensure TUN routes take priority
+// This is critical because Windows route preference = route metric + interface metric
+func (m *windowsRouteManager) setInterfaceMetric(family uint16) error {
+	var row MIB_IPINTERFACE_ROW
+
+	// Initialize and set key fields for lookup
+	row.Family = family
+	row.InterfaceLuid = m.luid
+
+	// Get current interface settings
+	ret, _, _ := procGetIpInterfaceEntry.Call(uintptr(unsafe.Pointer(&row)))
+	if ret != 0 {
+		return fmt.Errorf("GetIpInterfaceEntry failed for family %d: error code %d", family, ret)
+	}
+
+	// Log current metric settings
+	familyStr := "IPv4"
+	if family == windows.AF_INET6 {
+		familyStr = "IPv6"
+	}
+	errors.LogDebug(m.ctx, familyStr, " interface - current UseAutomaticMetric=", row.UseAutomaticMetric, " Metric=", row.Metric)
+
+	// Disable automatic metric and set metric to 0 (highest priority)
+	row.UseAutomaticMetric = 0 // FALSE
+	row.Metric = 0             // Lowest possible metric = highest priority
+
+	// Apply changes
+	ret, _, _ = procSetIpInterfaceEntry.Call(uintptr(unsafe.Pointer(&row)))
+	if ret != 0 {
+		return fmt.Errorf("SetIpInterfaceEntry failed for family %d: error code %d", family, ret)
+	}
+
+	errors.LogInfo(m.ctx, familyStr, " interface metric set to 0 (highest priority)")
 	return nil
 }
 
@@ -401,48 +496,4 @@ func prefixToAddressPrefix(prefix netip.Prefix) IP_ADDRESS_PREFIX {
 	}
 
 	return ap
-}
-
-// calculateGateway calculates the gateway address from TUN interface address
-// For a /30 subnet like 172.19.0.1/30, gateway is 172.19.0.2
-func calculateGateway(tunAddr netip.Prefix, isIPv4 bool) SOCKADDR_INET {
-	var sa SOCKADDR_INET
-
-	if !tunAddr.IsValid() {
-		// Use default addresses if not specified
-		if isIPv4 {
-			tunAddr = DefaultInet4Address
-		} else {
-			tunAddr = DefaultInet6Address
-		}
-	}
-
-	addr := tunAddr.Addr()
-	if isIPv4 {
-		sa.Family = windows.AF_INET
-		// Gateway is the next IP: 172.19.0.1 -> 172.19.0.2
-		gatewayIP := addr.As4()
-		gatewayIP[3]++ // Increment last octet
-		copy(sa.Data[2:6], gatewayIP[:])
-	} else {
-		sa.Family = windows.AF_INET6
-		// Gateway is the next IP: fdfe:dcba:9876::1 -> fdfe:dcba:9876::2
-		gatewayIP := addr.As16()
-		gatewayIP[15]++ // Increment last byte
-		copy(sa.Data[6:22], gatewayIP[:])
-	}
-
-	return sa
-}
-
-// formatGateway formats a SOCKADDR_INET for logging
-func formatGateway(sa SOCKADDR_INET) string {
-	if sa.Family == windows.AF_INET {
-		return fmt.Sprintf("%d.%d.%d.%d", sa.Data[2], sa.Data[3], sa.Data[4], sa.Data[5])
-	} else if sa.Family == windows.AF_INET6 {
-		var ip [16]byte
-		copy(ip[:], sa.Data[6:22])
-		return netip.AddrFrom16(ip).String()
-	}
-	return "unknown"
 }
