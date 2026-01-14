@@ -196,9 +196,9 @@ func (m *windowsRouteManager) createRoute(prefix netip.Prefix) (MIB_IPFORWARD_RO
 	row.InterfaceLuid = m.luid
 	row.DestinationPrefix = prefixToAddressPrefix(prefix)
 	row.NextHop = getGatewayAddress(prefix.Addr().Is4())
-	row.Metric = 0   // Use automatic metric
-	row.Protocol = 3 // MIB_IPPROTO_NETMGMT
-	row.Origin = 1   // NlroManual
+	row.Metric = 5    // Low metric to ensure TUN routes take precedence
+	row.Protocol = 3  // MIB_IPPROTO_NETMGMT
+	row.Origin = 1    // NlroManual
 
 	return row, nil
 }

@@ -119,6 +119,7 @@ type FWPM_FILTER0 struct {
 	_2                  [4]byte // padding for 8-byte alignment of FilterCondition
 	FilterCondition     *FWPM_FILTER_CONDITION0
 	Action              FWPM_ACTION0
+	_3                  [4]byte      // padding for 8-byte alignment of Context (Action is 20 bytes)
 	Context             windows.GUID // union: rawContext (uint64) or providerContextKey (GUID)
 	Reserved            *windows.GUID
 	FilterId            uint64
@@ -146,8 +147,7 @@ type FWP_VALUE0 struct {
 
 type FWPM_ACTION0 struct {
 	Type uint32
-	_    [4]byte
-	GUID windows.GUID
+	GUID windows.GUID // GUID only requires 4-byte alignment, no padding needed
 }
 
 var (
