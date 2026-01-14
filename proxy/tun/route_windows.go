@@ -89,6 +89,8 @@ type windowsRouteManager struct {
 	routes        []MIB_IPFORWARD_ROW2
 	wfpManager    *wfpManager
 	configuredIPs []SOCKADDR_INET
+	gateway4      SOCKADDR_INET // IPv4 gateway for routes
+	gateway6      SOCKADDR_INET // IPv6 gateway for routes
 }
 
 // NewRouteManager creates a new RouteManager for Windows
@@ -168,6 +170,11 @@ func (m *windowsRouteManager) SetRoutes() error {
 		return fmt.Errorf("failed to configure IP addresses: %w", err)
 	}
 
+	// Calculate gateway addresses for routes (next IP in the subnet)
+	m.gateway4 = calculateGateway(m.options.Inet4Address, true)
+	m.gateway6 = calculateGateway(m.options.Inet6Address, false)
+	errors.LogDebug(m.ctx, "Route gateways configured: IPv4=", formatGateway(m.gateway4), " IPv6=", formatGateway(m.gateway6))
+
 	// Build route prefixes
 	routePrefixes, err := BuildRouteRanges(m.options.RouteAddress, m.options.RouteExcludeAddress)
 	if err != nil {
@@ -220,7 +227,14 @@ func (m *windowsRouteManager) createRoute(prefix netip.Prefix) (MIB_IPFORWARD_RO
 	row.InterfaceLuid = m.luid
 	row.InterfaceIndex = m.ifIndex
 	row.DestinationPrefix = prefixToAddressPrefix(prefix)
-	row.NextHop = getGatewayAddress(prefix.Addr().Is4())
+
+	// Use calculated gateway address (next IP in TUN subnet)
+	if prefix.Addr().Is4() {
+		row.NextHop = m.gateway4
+	} else {
+		row.NextHop = m.gateway6
+	}
+
 	row.Metric = 1    // Very low metric to ensure TUN routes take precedence
 	row.Protocol = 3  // MIB_IPPROTO_NETMGMT
 	row.Origin = 1    // NlroManual
@@ -389,13 +403,46 @@ func prefixToAddressPrefix(prefix netip.Prefix) IP_ADDRESS_PREFIX {
 	return ap
 }
 
-// getGatewayAddress returns an empty gateway address (on-link route)
-func getGatewayAddress(isIPv4 bool) SOCKADDR_INET {
+// calculateGateway calculates the gateway address from TUN interface address
+// For a /30 subnet like 172.19.0.1/30, gateway is 172.19.0.2
+func calculateGateway(tunAddr netip.Prefix, isIPv4 bool) SOCKADDR_INET {
 	var sa SOCKADDR_INET
+
+	if !tunAddr.IsValid() {
+		// Use default addresses if not specified
+		if isIPv4 {
+			tunAddr = DefaultInet4Address
+		} else {
+			tunAddr = DefaultInet6Address
+		}
+	}
+
+	addr := tunAddr.Addr()
 	if isIPv4 {
 		sa.Family = windows.AF_INET
+		// Gateway is the next IP: 172.19.0.1 -> 172.19.0.2
+		gatewayIP := addr.As4()
+		gatewayIP[3]++ // Increment last octet
+		copy(sa.Data[2:6], gatewayIP[:])
 	} else {
 		sa.Family = windows.AF_INET6
+		// Gateway is the next IP: fdfe:dcba:9876::1 -> fdfe:dcba:9876::2
+		gatewayIP := addr.As16()
+		gatewayIP[15]++ // Increment last byte
+		copy(sa.Data[6:22], gatewayIP[:])
 	}
+
 	return sa
+}
+
+// formatGateway formats a SOCKADDR_INET for logging
+func formatGateway(sa SOCKADDR_INET) string {
+	if sa.Family == windows.AF_INET {
+		return fmt.Sprintf("%d.%d.%d.%d", sa.Data[2], sa.Data[3], sa.Data[4], sa.Data[5])
+	} else if sa.Family == windows.AF_INET6 {
+		var ip [16]byte
+		copy(ip[:], sa.Data[6:22])
+		return netip.AddrFrom16(ip).String()
+	}
+	return "unknown"
 }
