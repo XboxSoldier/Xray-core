@@ -91,6 +91,8 @@ type windowsRouteManager struct {
 
 // NewRouteManager creates a new RouteManager for Windows
 func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, error) {
+	errors.LogInfo(ctx, "NewRouteManager called for Windows, AutoRoute=", options.AutoRoute)
+
 	if !options.AutoRoute {
 		return &noopRouteManager{}, nil
 	}
@@ -101,6 +103,7 @@ func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, e
 		luid = LUID(options.InterfaceLUID)
 		errors.LogDebug(ctx, "using provided interface LUID: ", options.InterfaceLUID)
 	} else {
+		errors.LogDebug(ctx, "looking up LUID for interface: ", options.InterfaceName)
 		var err error
 		luid, err = getInterfaceLUID(options.InterfaceName)
 		if err != nil {
@@ -114,13 +117,15 @@ func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, e
 		luid:    luid,
 	}
 
-	// Initialize WFP manager for DNS leak prevention
+	// Initialize WFP manager for process protection and DNS leak prevention
+	errors.LogDebug(ctx, "initializing WFP manager, DisableDNSHijack=", options.DisableDNSHijack)
 	if !options.DisableDNSHijack {
 		wfp, err := newWFPManager(ctx, luid)
 		if err != nil {
 			errors.LogWarning(ctx, "failed to initialize WFP manager: ", err)
 		} else {
 			m.wfpManager = wfp
+			errors.LogInfo(ctx, "WFP manager initialized successfully")
 		}
 	}
 
@@ -129,12 +134,17 @@ func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, e
 
 // SetRoutes configures routes for TUN interface
 func (m *windowsRouteManager) SetRoutes() error {
+	errors.LogDebug(m.ctx, "SetRoutes called, wfpManager=", m.wfpManager != nil)
+
 	// Enable process protection FIRST - this prevents traffic loop
 	// by excluding xray's own traffic from TUN routing
 	if m.wfpManager != nil {
+		errors.LogDebug(m.ctx, "enabling WFP process protection...")
 		if err := m.wfpManager.EnableProcessProtection(); err != nil {
 			errors.LogWarning(m.ctx, "failed to enable process protection: ", err)
 		}
+	} else {
+		errors.LogWarning(m.ctx, "wfpManager is nil, process protection disabled!")
 	}
 
 	// Configure IP addresses

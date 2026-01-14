@@ -123,15 +123,19 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 	t.stack = tunStack
 
 	// Set up auto-route if enabled
+	errors.LogDebug(t.ctx, "auto_route config value: ", t.config.AutoRoute)
 	if t.config.AutoRoute {
+		errors.LogInfo(t.ctx, "setting up auto-route...")
 		routeOpts, err := t.buildRouteOptions()
 		if err != nil {
 			errors.LogWarning(t.ctx, "failed to build route options: ", err)
 		} else {
+			errors.LogDebug(t.ctx, "route options built, creating route manager...")
 			routeManager, err := NewRouteManager(t.ctx, routeOpts)
 			if err != nil {
 				errors.LogWarning(t.ctx, "failed to create route manager: ", err)
 			} else {
+				errors.LogDebug(t.ctx, "route manager created, setting routes...")
 				if err := routeManager.SetRoutes(); err != nil {
 					errors.LogWarning(t.ctx, "failed to set routes: ", err)
 					_ = routeManager.Close()
@@ -140,6 +144,8 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 				}
 			}
 		}
+	} else {
+		errors.LogInfo(t.ctx, "auto_route is disabled")
 	}
 
 	errors.LogInfo(t.ctx, tunName, " up")
