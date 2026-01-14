@@ -1,5 +1,7 @@
 {
-  "_comment": "Windows: Download wintun.dll from https://www.wintun.net/ and place it alongside xray.exe",
+  "_comment1": "Windows: Download wintun.dll from https://www.wintun.net/ and place it alongside xray.exe",
+  "_comment2": "IMPORTANT: Replace YOUR_LOCAL_IP with your physical network adapter's IP (e.g., 192.168.1.100)",
+  "_comment3": "Run 'ipconfig' to find your adapter IP, use sendThrough to bind outbound to physical interface",
   "log": {
     "loglevel": "debug"
   },
@@ -50,6 +52,7 @@
     {
       "tag": "proxy",
       "protocol": "shadowsocks",
+      "sendThrough": "YOUR_LOCAL_IP",
       "settings": {
         "servers": [
           {
@@ -59,23 +62,14 @@
             "password": "YOUR_PASSWORD"
           }
         ]
-      },
-      "streamSettings": {
-        "sockopt": {
-          "interface": "乙太網路"
-        }
       }
     },
     {
       "tag": "direct",
       "protocol": "freedom",
+      "sendThrough": "YOUR_LOCAL_IP",
       "settings": {
         "domainStrategy": "AsIs"
-      },
-      "streamSettings": {
-        "sockopt": {
-          "interface": "乙太網路"
-        }
       }
     },
     {
