@@ -286,7 +286,7 @@ func (m *wfpManager) addProcessPermitFilter(layerKey windows.GUID) error {
 		DisplayData:         createDisplayData("Xray Process Permit", "Allow xray outbound traffic to bypass TUN"),
 		LayerKey:            layerKey,
 		SubLayerKey:         m.subLayerKey,
-		Weight:              FWP_VALUE0{Type: FWP_UINT64, Value: 0xFFFFFFFFFFFFFFFF}, // Highest priority
+		Weight:              FWP_VALUE0{Type: FWP_EMPTY}, // Auto-weight
 		NumFilterConditions: 1,
 		FilterCondition:     &condition,
 		Action:              FWPM_ACTION0{Type: FWP_ACTION_PERMIT},
@@ -362,7 +362,7 @@ func (m *wfpManager) addDNSBlockFilter(layerKey windows.GUID) error {
 		DisplayData:         createDisplayData("Xray DNS Block", "Block DNS requests outside TUN"),
 		LayerKey:            layerKey,
 		SubLayerKey:         m.subLayerKey,
-		Weight:              FWP_VALUE0{Type: FWP_UINT64, Value: 1000}, // Lower priority than process permit
+		Weight:              FWP_VALUE0{Type: FWP_EMPTY}, // Auto-weight
 		NumFilterConditions: 1,
 		FilterCondition:     &condition,
 		Action:              FWPM_ACTION0{Type: FWP_ACTION_BLOCK},
