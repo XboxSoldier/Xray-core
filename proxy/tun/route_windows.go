@@ -63,13 +63,30 @@ var (
 	procFreeMibTable                  = modiphlpapi.NewProc("FreeMibTable")
 )
 
+// MIB_UNICASTIPADDRESS_ROW represents a unicast IP address entry
+type MIB_UNICASTIPADDRESS_ROW struct {
+	Address            SOCKADDR_INET
+	InterfaceLuid      LUID
+	InterfaceIndex     uint32
+	PrefixOrigin       uint32
+	SuffixOrigin       uint32
+	ValidLifetime      uint32
+	PreferredLifetime  uint32
+	OnLinkPrefixLength uint8
+	SkipAsSource       uint8
+	DadState           uint32
+	ScopeId            uint32
+	CreationTimeStamp  uint64
+}
+
 // windowsRouteManager implements RouteManager for Windows
 type windowsRouteManager struct {
-	ctx        context.Context
-	options    RouteOptions
-	luid       LUID
-	routes     []MIB_IPFORWARD_ROW2
-	wfpManager *wfpManager
+	ctx           context.Context
+	options       RouteOptions
+	luid          LUID
+	routes        []MIB_IPFORWARD_ROW2
+	wfpManager    *wfpManager
+	configuredIPs []SOCKADDR_INET
 }
 
 // NewRouteManager creates a new RouteManager for Windows
@@ -112,6 +129,11 @@ func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, e
 
 // SetRoutes configures routes for TUN interface
 func (m *windowsRouteManager) SetRoutes() error {
+	// Configure IP addresses first
+	if err := m.configureIPAddresses(); err != nil {
+		return fmt.Errorf("failed to configure IP addresses: %w", err)
+	}
+
 	// Build route prefixes
 	routePrefixes, err := BuildRouteRanges(m.options.RouteAddress, m.options.RouteExcludeAddress)
 	if err != nil {
@@ -166,6 +188,92 @@ func (m *windowsRouteManager) createRoute(prefix netip.Prefix) (MIB_IPFORWARD_RO
 	return row, nil
 }
 
+// configureIPAddresses sets up IP addresses on the TUN interface
+func (m *windowsRouteManager) configureIPAddresses() error {
+	// Configure IPv4 address
+	inet4Addr := m.options.Inet4Address
+	if !inet4Addr.IsValid() {
+		inet4Addr = DefaultInet4Address
+	}
+	if inet4Addr.IsValid() {
+		if err := m.addIPAddress(inet4Addr); err != nil {
+			return fmt.Errorf("failed to add IPv4 address %s: %w", inet4Addr, err)
+		}
+		errors.LogInfo(m.ctx, "configured IPv4 address ", inet4Addr, " on TUN interface")
+	}
+
+	// Configure IPv6 address
+	inet6Addr := m.options.Inet6Address
+	if !inet6Addr.IsValid() {
+		inet6Addr = DefaultInet6Address
+	}
+	if inet6Addr.IsValid() {
+		if err := m.addIPAddress(inet6Addr); err != nil {
+			// IPv6 may not be available, just log warning
+			errors.LogWarning(m.ctx, "failed to add IPv6 address ", inet6Addr, ": ", err)
+		} else {
+			errors.LogInfo(m.ctx, "configured IPv6 address ", inet6Addr, " on TUN interface")
+		}
+	}
+
+	return nil
+}
+
+// addIPAddress adds an IP address to the TUN interface
+func (m *windowsRouteManager) addIPAddress(prefix netip.Prefix) error {
+	var row MIB_UNICASTIPADDRESS_ROW
+
+	// Initialize the row
+	procInitializeUnicastIpAddressRow.Call(uintptr(unsafe.Pointer(&row)))
+
+	row.InterfaceLuid = m.luid
+	row.OnLinkPrefixLength = uint8(prefix.Bits())
+	row.PrefixOrigin = 1  // IpPrefixOriginManual
+	row.SuffixOrigin = 1  // IpSuffixOriginManual
+	row.ValidLifetime = 0xFFFFFFFF
+	row.PreferredLifetime = 0xFFFFFFFF
+	row.SkipAsSource = 0
+
+	addr := prefix.Addr()
+	if addr.Is4() {
+		row.Address.Family = windows.AF_INET
+		copy(row.Address.Data[2:6], addr.AsSlice())
+	} else {
+		row.Address.Family = windows.AF_INET6
+		copy(row.Address.Data[6:22], addr.AsSlice())
+	}
+
+	ret, _, _ := procCreateUnicastIpAddressEntry.Call(uintptr(unsafe.Pointer(&row)))
+	if ret != 0 && ret != uintptr(windows.ERROR_OBJECT_ALREADY_EXISTS) {
+		return fmt.Errorf("CreateUnicastIpAddressEntry failed: error code %d", ret)
+	}
+
+	m.configuredIPs = append(m.configuredIPs, row.Address)
+	return nil
+}
+
+// unconfigureIPAddresses removes IP addresses from the TUN interface
+func (m *windowsRouteManager) unconfigureIPAddresses() error {
+	var errs []error
+	for _, addr := range m.configuredIPs {
+		var row MIB_UNICASTIPADDRESS_ROW
+		procInitializeUnicastIpAddressRow.Call(uintptr(unsafe.Pointer(&row)))
+		row.InterfaceLuid = m.luid
+		row.Address = addr
+
+		ret, _, _ := procDeleteUnicastIpAddressEntry.Call(uintptr(unsafe.Pointer(&row)))
+		if ret != 0 && ret != uintptr(windows.ERROR_NOT_FOUND) {
+			errs = append(errs, fmt.Errorf("DeleteUnicastIpAddressEntry failed: error code %d", ret))
+		}
+	}
+	m.configuredIPs = nil
+
+	if len(errs) > 0 {
+		return fmt.Errorf("errors during IP address cleanup: %v", errs)
+	}
+	return nil
+}
+
 // UnsetRoutes removes configured routes
 func (m *windowsRouteManager) UnsetRoutes() error {
 	var errs []error
@@ -185,6 +293,11 @@ func (m *windowsRouteManager) UnsetRoutes() error {
 		}
 	}
 	m.routes = nil
+
+	// Remove IP addresses
+	if err := m.unconfigureIPAddresses(); err != nil {
+		errs = append(errs, err)
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("errors during route cleanup: %v", errs)

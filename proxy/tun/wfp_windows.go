@@ -219,12 +219,18 @@ func (m *wfpManager) EnableDNSProtection() error {
 		return nil
 	}
 
-	// Block DNS (port 53) on IPv4
+	// First, allow DNS through TUN interface (higher priority)
+	if err := m.addDNSAllowFilter(FWPM_LAYER_ALE_AUTH_CONNECT_V4); err != nil {
+		return fmt.Errorf("failed to add IPv4 DNS allow filter: %w", err)
+	}
+	if err := m.addDNSAllowFilter(FWPM_LAYER_ALE_AUTH_CONNECT_V6); err != nil {
+		return fmt.Errorf("failed to add IPv6 DNS allow filter: %w", err)
+	}
+
+	// Then, block DNS (port 53) on all other interfaces (lower priority)
 	if err := m.addDNSBlockFilter(FWPM_LAYER_ALE_AUTH_CONNECT_V4); err != nil {
 		return fmt.Errorf("failed to add IPv4 DNS block filter: %w", err)
 	}
-
-	// Block DNS (port 53) on IPv6
 	if err := m.addDNSBlockFilter(FWPM_LAYER_ALE_AUTH_CONNECT_V6); err != nil {
 		return fmt.Errorf("failed to add IPv6 DNS block filter: %w", err)
 	}
@@ -232,6 +238,56 @@ func (m *wfpManager) EnableDNSProtection() error {
 	m.enabled = true
 	errors.LogInfo(m.ctx, "DNS leak prevention enabled via WFP")
 
+	return nil
+}
+
+// addDNSAllowFilter adds a filter to allow DNS traffic through TUN interface
+func (m *wfpManager) addDNSAllowFilter(layerKey windows.GUID) error {
+	// Two conditions: remote port == 53 AND local interface == TUN LUID
+	conditions := make([]FWPM_FILTER_CONDITION0, 2)
+
+	// Condition 1: remote port == 53
+	conditions[0] = FWPM_FILTER_CONDITION0{
+		FieldKey:  FWPM_CONDITION_IP_REMOTE_PORT,
+		MatchType: FWP_MATCH_EQUAL,
+		ConditionValue: FWP_CONDITION_VALUE0{
+			Type:  FWP_UINT16,
+			Value: uintptr(53),
+		},
+	}
+
+	// Condition 2: local interface == TUN LUID
+	conditions[1] = FWPM_FILTER_CONDITION0{
+		FieldKey:  FWPM_CONDITION_IP_LOCAL_INTERFACE,
+		MatchType: FWP_MATCH_EQUAL,
+		ConditionValue: FWP_CONDITION_VALUE0{
+			Type:  8, // FWP_UINT64
+			Value: uintptr(unsafe.Pointer(&m.luid)),
+		},
+	}
+
+	filter := FWPM_FILTER0{
+		DisplayData:         createDisplayData("Xray DNS Allow TUN", "Allow DNS through TUN interface"),
+		LayerKey:            layerKey,
+		SubLayerKey:         m.subLayerKey,
+		Weight:              FWP_VALUE0{Type: FWP_UINT16, Value: 100}, // Higher priority than block
+		NumFilterConditions: 2,
+		FilterCondition:     &conditions[0],
+		Action:              FWPM_ACTION0{Type: FWP_ACTION_PERMIT},
+	}
+
+	var filterID uint64
+	ret, _, err := procFwpmFilterAdd0.Call(
+		m.engine,
+		uintptr(unsafe.Pointer(&filter)),
+		0, // sd
+		uintptr(unsafe.Pointer(&filterID)),
+	)
+	if ret != 0 {
+		return fmt.Errorf("FwpmFilterAdd0 failed: %v (code %d)", err, ret)
+	}
+
+	m.filterIDs = append(m.filterIDs, filterID)
 	return nil
 }
 
@@ -251,7 +307,7 @@ func (m *wfpManager) addDNSBlockFilter(layerKey windows.GUID) error {
 		DisplayData:         createDisplayData("Xray DNS Block", "Block DNS requests outside TUN"),
 		LayerKey:            layerKey,
 		SubLayerKey:         m.subLayerKey,
-		Weight:              FWP_VALUE0{Type: FWP_UINT16, Value: 10},
+		Weight:              FWP_VALUE0{Type: FWP_UINT16, Value: 10}, // Lower priority than allow
 		NumFilterConditions: 1,
 		FilterCondition:     &condition,
 		Action:              FWPM_ACTION0{Type: FWP_ACTION_BLOCK},
