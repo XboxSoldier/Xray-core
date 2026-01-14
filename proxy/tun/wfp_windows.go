@@ -23,8 +23,12 @@ const (
 
 	FWP_MATCH_EQUAL = 0
 
-	FWP_UINT16         = 3
-	FWP_BYTE_BLOB_TYPE = 13
+	// FWP_DATA_TYPE values from Windows SDK
+	FWP_UINT8          = 1
+	FWP_UINT16         = 2
+	FWP_UINT32         = 3
+	FWP_UINT64         = 4
+	FWP_BYTE_BLOB_TYPE = 12
 )
 
 // GUIDs for WFP layers and conditions
@@ -110,8 +114,7 @@ type FWPM_FILTER0 struct {
 	NumFilterConditions uint32
 	FilterCondition     *FWPM_FILTER_CONDITION0
 	Action              FWPM_ACTION0
-	_                   [4]byte
-	Context             windows.GUID
+	Context             windows.GUID // union: rawContext (uint64) or providerContextKey (GUID)
 	Reserved            *windows.GUID
 	FilterId            uint64
 	EffectiveWeight     FWP_VALUE0
@@ -326,53 +329,14 @@ func (m *wfpManager) EnableDNSProtection() error {
 	return nil
 }
 
-// addDNSAllowFilter adds a filter to allow DNS traffic through TUN interface
+// addDNSAllowFilter adds a filter to allow DNS traffic from our process
+// Note: FWPM_CONDITION_IP_LOCAL_INTERFACE is not available on ALE layers,
+// so we rely on process protection to allow xray's DNS queries through
 func (m *wfpManager) addDNSAllowFilter(layerKey windows.GUID) error {
-	// Two conditions: remote port == 53 AND local interface == TUN LUID
-	conditions := make([]FWPM_FILTER_CONDITION0, 2)
-
-	// Condition 1: remote port == 53
-	conditions[0] = FWPM_FILTER_CONDITION0{
-		FieldKey:  FWPM_CONDITION_IP_REMOTE_PORT,
-		MatchType: FWP_MATCH_EQUAL,
-		ConditionValue: FWP_CONDITION_VALUE0{
-			Type:  FWP_UINT16,
-			Value: uintptr(53),
-		},
-	}
-
-	// Condition 2: local interface == TUN LUID
-	conditions[1] = FWPM_FILTER_CONDITION0{
-		FieldKey:  FWPM_CONDITION_IP_LOCAL_INTERFACE,
-		MatchType: FWP_MATCH_EQUAL,
-		ConditionValue: FWP_CONDITION_VALUE0{
-			Type:  8, // FWP_UINT64
-			Value: uintptr(unsafe.Pointer(&m.luid)),
-		},
-	}
-
-	filter := FWPM_FILTER0{
-		DisplayData:         createDisplayData("Xray DNS Allow TUN", "Allow DNS through TUN interface"),
-		LayerKey:            layerKey,
-		SubLayerKey:         m.subLayerKey,
-		Weight:              FWP_VALUE0{Type: FWP_UINT16, Value: 100}, // Higher priority than block
-		NumFilterConditions: 2,
-		FilterCondition:     &conditions[0],
-		Action:              FWPM_ACTION0{Type: FWP_ACTION_PERMIT},
-	}
-
-	var filterID uint64
-	ret, _, err := procFwpmFilterAdd0.Call(
-		m.engine,
-		uintptr(unsafe.Pointer(&filter)),
-		0, // sd
-		uintptr(unsafe.Pointer(&filterID)),
-	)
-	if ret != 0 {
-		return fmt.Errorf("FwpmFilterAdd0 failed: %v (code %d)", err, ret)
-	}
-
-	m.filterIDs = append(m.filterIDs, filterID)
+	// Since process protection already allows all traffic from xray,
+	// we don't need a separate DNS allow filter.
+	// The block filter will block DNS from other apps, and xray's DNS
+	// will be permitted by the process protection filter.
 	return nil
 }
 

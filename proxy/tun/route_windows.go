@@ -158,7 +158,7 @@ func (m *windowsRouteManager) SetRoutes() error {
 
 	// Get interface index for logging
 	var ifIndex uint32
-	procConvertInterfaceLuidToIndex.Call(uintptr(m.luid), uintptr(unsafe.Pointer(&ifIndex)))
+	procConvertInterfaceLuidToIndex.Call(uintptr(unsafe.Pointer(&m.luid)), uintptr(unsafe.Pointer(&ifIndex)))
 
 	// Add routes
 	for _, prefix := range routePrefixes {
