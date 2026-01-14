@@ -85,6 +85,7 @@ type windowsRouteManager struct {
 	ctx           context.Context
 	options       RouteOptions
 	luid          LUID
+	ifIndex       uint32
 	routes        []MIB_IPFORWARD_ROW2
 	wfpManager    *wfpManager
 	configuredIPs []SOCKADDR_INET
@@ -112,10 +113,19 @@ func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, e
 		}
 	}
 
+	// Get interface index from LUID
+	var ifIndex uint32
+	ret, _, _ := procConvertInterfaceLuidToIndex.Call(uintptr(unsafe.Pointer(&luid)), uintptr(unsafe.Pointer(&ifIndex)))
+	if ret != 0 {
+		errors.LogWarning(ctx, "ConvertInterfaceLuidToIndex failed: ", ret)
+	}
+	errors.LogDebug(ctx, "TUN interface LUID=", luid, " Index=", ifIndex)
+
 	m := &windowsRouteManager{
 		ctx:     ctx,
 		options: options,
 		luid:    luid,
+		ifIndex: ifIndex,
 	}
 
 	// WFP is currently disabled due to struct layout issues with Windows API
@@ -164,12 +174,10 @@ func (m *windowsRouteManager) SetRoutes() error {
 		return fmt.Errorf("failed to build route ranges: %w", err)
 	}
 
-	// Get interface index for logging
-	var ifIndex uint32
-	procConvertInterfaceLuidToIndex.Call(uintptr(unsafe.Pointer(&m.luid)), uintptr(unsafe.Pointer(&ifIndex)))
-
 	// Add routes
-	for _, prefix := range routePrefixes {
+	errors.LogInfo(m.ctx, "Adding ", len(routePrefixes), " routes to TUN interface...")
+	successCount := 0
+	for i, prefix := range routePrefixes {
 		route, err := m.createRoute(prefix)
 		if err != nil {
 			return fmt.Errorf("failed to create route for %s: %w", prefix, err)
@@ -177,11 +185,19 @@ func (m *windowsRouteManager) SetRoutes() error {
 
 		ret, _, _ := procCreateIpForwardEntry2.Call(uintptr(unsafe.Pointer(&route)))
 		if ret != 0 && ret != uintptr(windows.ERROR_OBJECT_ALREADY_EXISTS) {
-			return fmt.Errorf("failed to add route %s: error code %d", prefix, ret)
+			errors.LogWarning(m.ctx, "failed to add route ", prefix, ": error code ", ret)
+			continue // Don't fail on individual route errors
 		}
 
+		// Log first few routes for debugging
+		if i < 5 {
+			errors.LogDebug(m.ctx, "Added route: ", prefix, " metric=", route.Metric, " ret=", ret)
+		}
+
+		successCount++
 		m.routes = append(m.routes, route)
 	}
+	errors.LogInfo(m.ctx, "Successfully added ", successCount, "/", len(routePrefixes), " routes")
 
 	// Enable DNS leak prevention
 	if m.wfpManager != nil && !m.options.DisableDNSHijack {
@@ -202,9 +218,10 @@ func (m *windowsRouteManager) createRoute(prefix netip.Prefix) (MIB_IPFORWARD_RO
 	var row MIB_IPFORWARD_ROW2
 
 	row.InterfaceLuid = m.luid
+	row.InterfaceIndex = m.ifIndex
 	row.DestinationPrefix = prefixToAddressPrefix(prefix)
 	row.NextHop = getGatewayAddress(prefix.Addr().Is4())
-	row.Metric = 5    // Low metric to ensure TUN routes take precedence
+	row.Metric = 1    // Very low metric to ensure TUN routes take precedence
 	row.Protocol = 3  // MIB_IPPROTO_NETMGMT
 	row.Origin = 1    // NlroManual
 
