@@ -1,6 +1,9 @@
 package conf
 
 import (
+	"context"
+
+	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/proxy/tun"
 	"google.golang.org/protobuf/proto"
 )
@@ -26,6 +29,12 @@ type TunConfig struct {
 }
 
 func (v *TunConfig) Build() (proto.Message, error) {
+	// Debug: log parsed config values
+	errors.LogDebug(context.Background(), "TunConfig.Build() called: Name=", v.Name,
+		", MTU=", v.MTU, ", AutoRoute=", v.AutoRoute,
+		", RouteAddress=", v.RouteAddress, ", RouteExcludeAddress=", v.RouteExcludeAddress,
+		", Inet4Address=", v.Inet4Address, ", Inet6Address=", v.Inet6Address)
+
 	config := &tun.Config{
 		Name:                v.Name,
 		MTU:                 v.MTU,
