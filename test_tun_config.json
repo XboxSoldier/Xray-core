@@ -1,0 +1,109 @@
+{
+  "log": {
+    "loglevel": "debug"
+  },
+  "dns": {
+    "servers": [
+      {
+        "address": "1.1.1.1",
+        "domains": ["geosite:!private"],
+        "skipFallback": true,
+        "tag": "proxy-dns"
+      },
+      {
+        "address": "localhost",
+        "domains": ["geosite:private"],
+        "skipFallback": false,
+        "tag": "direct-dns"
+      }
+    ],
+    "queryStrategy": "UseIP"
+  },
+  "inbounds": [
+    {
+      "tag": "tun-in",
+      "protocol": "tun",
+      "settings": {
+        "name": "xray0",
+        "MTU": 1500,
+        "autoRoute": true,
+        "routeExcludeAddress": [
+          "192.168.0.0/16",
+          "10.0.0.0/8",
+          "172.16.0.0/12",
+          "127.0.0.0/8",
+          "224.0.0.0/4",
+          "fc00::/7",
+          "fe80::/10",
+          "ff00::/8"
+        ],
+        "inet4Address": "172.19.0.1/30",
+        "inet6Address": "fdfe:dcba:9876::1/126"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [
+          {
+            "address": "YOUR_SERVER_ADDRESS",
+            "port": 8388,
+            "method": "aes-256-gcm",
+            "password": "YOUR_PASSWORD"
+          }
+        ]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "interface": "乙太網路"
+        }
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "AsIs"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "interface": "乙太網路"
+        }
+      }
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["tun-in"],
+        "domain": ["geosite:private"],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "inboundTag": ["tun-in"],
+        "ip": ["geoip:private"],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "inboundTag": ["tun-in"],
+        "outboundTag": "proxy"
+      }
+    ]
+  }
+}
