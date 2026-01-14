@@ -1,6 +1,7 @@
 {
   "_comment1": "Windows: Download wintun.dll from https://www.wintun.net/ and place it alongside xray.exe",
-  "_comment2": "Traffic loop is prevented by WFP process protection (xray traffic bypasses TUN)",
+  "_comment2": "IMPORTANT: Add your proxy server IP to routeExcludeAddress to prevent traffic loops!",
+  "_comment3": "Example: If your proxy server is 1.2.3.4, add \"1.2.3.4/32\" to routeExcludeAddress",
   "log": {
     "loglevel": "debug"
   },
@@ -28,6 +29,7 @@
         "MTU": 1500,
         "autoRoute": true,
         "routeExcludeAddress": [
+          "YOUR_PROXY_SERVER_IP/32",
           "192.168.0.0/16",
           "10.0.0.0/8",
           "172.16.0.0/12",

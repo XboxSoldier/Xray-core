@@ -118,17 +118,22 @@ func NewRouteManager(ctx context.Context, options RouteOptions) (RouteManager, e
 		luid:    luid,
 	}
 
-	// Initialize WFP manager for process protection and DNS leak prevention
-	errors.LogDebug(ctx, "initializing WFP manager, DisableDNSHijack=", options.DisableDNSHijack)
-	if !options.DisableDNSHijack {
-		wfp, err := newWFPManager(ctx, luid)
-		if err != nil {
-			errors.LogWarning(ctx, "failed to initialize WFP manager: ", err)
-		} else {
-			m.wfpManager = wfp
-			errors.LogInfo(ctx, "WFP manager initialized successfully")
-		}
-	}
+	// WFP is currently disabled due to struct layout issues with Windows API
+	// Users should add their proxy server IP to routeExcludeAddress to prevent traffic loops
+	// TODO: Fix WFP struct layouts and re-enable
+	errors.LogInfo(ctx, "WFP is disabled - add proxy server IP to routeExcludeAddress to prevent loops")
+
+	// Initialize WFP manager for process protection and DNS leak prevention (experimental)
+	// errors.LogDebug(ctx, "initializing WFP manager, DisableDNSHijack=", options.DisableDNSHijack)
+	// if !options.DisableDNSHijack {
+	// 	wfp, err := newWFPManager(ctx, luid)
+	// 	if err != nil {
+	// 		errors.LogWarning(ctx, "failed to initialize WFP manager: ", err)
+	// 	} else {
+	// 		m.wfpManager = wfp
+	// 		errors.LogInfo(ctx, "WFP manager initialized successfully")
+	// 	}
+	// }
 
 	return m, nil
 }
