@@ -77,10 +77,10 @@ type FWPM_SESSION0 struct {
 	Flags                uint32
 	TxnWaitTimeoutInMSec uint32
 	ProcessId            uint32
+	_                    [4]byte // padding for 8-byte alignment of Sid
 	Sid                  *windows.SID
 	Username             *uint16
-	KernelMode           uint8
-	_                    [3]byte
+	KernelMode           int32 // BOOL is 4 bytes on Windows
 }
 
 type FWPM_DISPLAY_DATA0 struct {

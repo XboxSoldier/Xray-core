@@ -22,6 +22,7 @@ type MIB_IPFORWARD_ROW2 struct {
 	DestinationPrefix    IP_ADDRESS_PREFIX
 	NextHop              SOCKADDR_INET
 	SitePrefixLength     uint8
+	_                    [3]byte // padding for 4-byte alignment of ValidLifetime
 	ValidLifetime        uint32
 	PreferredLifetime    uint32
 	Metric               uint32
@@ -64,6 +65,7 @@ var (
 // MIB_UNICASTIPADDRESS_ROW represents a unicast IP address entry
 type MIB_UNICASTIPADDRESS_ROW struct {
 	Address            SOCKADDR_INET
+	_                  [4]byte // padding for 8-byte alignment of InterfaceLuid
 	InterfaceLuid      LUID
 	InterfaceIndex     uint32
 	PrefixOrigin       uint32
@@ -72,6 +74,7 @@ type MIB_UNICASTIPADDRESS_ROW struct {
 	PreferredLifetime  uint32
 	OnLinkPrefixLength uint8
 	SkipAsSource       uint8
+	_2                 [2]byte // padding for 4-byte alignment of DadState
 	DadState           uint32
 	ScopeId            uint32
 	CreationTimeStamp  uint64
