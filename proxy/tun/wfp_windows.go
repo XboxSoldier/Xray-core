@@ -142,6 +142,7 @@ type FWPM_ACTION0 struct {
 
 var (
 	modfwpuclnt = windows.NewLazySystemDLL("fwpuclnt.dll")
+	modole32    = windows.NewLazySystemDLL("ole32.dll")
 
 	procFwpmEngineOpen0          = modfwpuclnt.NewProc("FwpmEngineOpen0")
 	procFwpmEngineClose0         = modfwpuclnt.NewProc("FwpmEngineClose0")
@@ -149,6 +150,7 @@ var (
 	procFwpmSubLayerDeleteByKey0 = modfwpuclnt.NewProc("FwpmSubLayerDeleteByKey0")
 	procFwpmFilterAdd0           = modfwpuclnt.NewProc("FwpmFilterAdd0")
 	procFwpmFilterDeleteById0    = modfwpuclnt.NewProc("FwpmFilterDeleteById0")
+	procCoCreateGuid             = modole32.NewProc("CoCreateGuid")
 )
 
 // wfpManager manages Windows Filtering Platform for DNS leak prevention
@@ -185,9 +187,10 @@ func newWFPManager(ctx context.Context, luid LUID) (*wfpManager, error) {
 	}
 
 	// Generate sublayer GUID
-	if err := windows.CoCreateGuid(&m.subLayerKey); err != nil {
+	ret, _, _ = procCoCreateGuid.Call(uintptr(unsafe.Pointer(&m.subLayerKey)))
+	if ret != 0 {
 		m.Close()
-		return nil, fmt.Errorf("failed to create GUID: %w", err)
+		return nil, fmt.Errorf("CoCreateGuid failed: code %d", ret)
 	}
 
 	// Add sublayer
